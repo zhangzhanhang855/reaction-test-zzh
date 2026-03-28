@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>注意力测试 (圆形/三角形)</title>
+    <title>注意力测试 (黑色图形瞬闪版)</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
@@ -14,6 +14,8 @@
             display: flex;
             flex-direction: column;
             height: 100vh;
+            user-select: none; /* 防止频繁点击选择文本 */
+            -webkit-user-select: none;
         }
 
         /* 顶部状态栏 */
@@ -35,6 +37,7 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            background-color: white; /* 调亮背景，使黑色图形更明显 */
         }
 
         /* 分割线辅助 */
@@ -44,28 +47,32 @@
             top: 0;
             bottom: 0;
             width: 1px;
-            border-left: 1px dashed #ccc;
+            border-left: 1px dashed #eee; /* 淡化分割线 */
         }
 
-        /* 形状样式 */
+        /* 形状基础样式 */
         .shape {
-            display: none;
+            display: none; /* 初始隐藏 */
             position: absolute;
+            opacity: 1;
+            transition: opacity 0.1s ease-out; /* 消失时的轻微淡出效果，看起来更像闪烁 */
         }
 
+        /* 圆形：黑色 */
         #circle {
             width: 100px;
             height: 100px;
-            background-color: #ff4757;
+            background-color: black;
             border-radius: 50%;
         }
 
+        /* 三角形：黑色 */
         #triangle {
             width: 0;
             height: 0;
             border-left: 50px solid transparent;
             border-right: 50px solid transparent;
-            border-bottom: 86.6px solid #2ed573;
+            border-bottom: 86.6px solid black; /* 黑色 */
         }
 
         /* 初始界面和结束界面 */
@@ -75,7 +82,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(255, 255, 255, 0.98);
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -86,19 +93,31 @@
         }
 
         #report-container {
-            width: 80%;
+            width: 90%;
             max-width: 800px;
             display: none;
+        }
+
+        #chart-wrapper {
+            position: relative;
+            height: 40vh;
+            width: 100%;
+            margin-bottom: 20px;
         }
 
         button {
             padding: 15px 30px;
             font-size: 1.2rem;
-            background: #007bff;
+            background: #333;
             color: white;
             border: none;
             border-radius: 5px;
             cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #555;
         }
 
         .feedback {
@@ -107,6 +126,12 @@
             font-size: 2rem;
             font-weight: bold;
             pointer-events: none;
+            z-index: 5;
+        }
+        
+        .instruction-icon {
+            font-size: 3rem;
+            margin-bottom: 10px;
         }
     </style>
 </head>
@@ -114,7 +139,7 @@
 
 <div id="info-bar">
     <div id="timer">剩余时间: 180s</div>
-    <div id="score">正确: 0 | 错误: 0</div>
+    <div id="score">正确: 0 | 错误: 0 | 漏击: 0</div>
 </div>
 
 <div id="game-area">
@@ -126,29 +151,46 @@
 
 <div id="overlay">
     <div id="start-screen">
-        <h1>注意力与反应力测试</h1>
-        <p>🔴 看到<b>圆形</b>：点击屏幕<b>左侧</b></p>
-        <p>🔺 看到<b>三角形</b>：点击屏幕<b>右侧</b></p>
+        <h1>注意力测试 (瞬闪版)
+</h1>
+        <p>图形将会在屏幕中央<b style="color:red">瞬时闪烁</b>，请快速反应！</p>
+        <div style="display: flex; gap: 40px; margin: 30px 0;">
+            <div>
+                <div class="instruction-icon">⚫</div>
+                <p>看到<b>黑色圆形</b></p>
+                <p>点击屏幕<b>左侧</b></p>
+            </div>
+            <div>
+                <div class="instruction-icon">▲</div>
+                <p>看到<b>黑色三角形</b></p>
+                <p>点击屏幕<b>右侧</b></p>
+            </div>
+        </div>
         <p>测试时长：3 分钟</p>
         <button onclick="startTest()">开始测试</button>
     </div>
     
     <div id="report-container">
         <h2>测试报告</h2>
-        <canvas id="reactionChart"></canvas>
-        <p id="summary-text"></p>
+        <div id="chart-wrapper">
+            <canvas id="reactionChart"></canvas>
+        </div>
+        <p id="summary-text" style="font-size: 1.1rem; line-height: 1.6;"></p>
         <button onclick="location.reload()">重新测试</button>
     </div>
 </div>
 
 <script>
     let startTime, shapeAppearTime;
-    let testDuration = 180; // 3分钟
-    let timerInterval, gameTimeout;
-    let results = []; // 存储每次反应时间 {time: 测试进行的时间秒数, rt: 反应耗时}
-    let stats = { correct: 0, wrong: 0 };
+    let testDuration = 180; // 3分钟 (180秒)
+    let timerInterval, gameTimeout, hideTimeout;
+    let results = []; // 存储每次正确反应数据 {x: 时间点, y: 反应耗时}
+    let stats = { correct: 0, wrong: 0, missed: 0 };
     let currentShape = null; // 'circle' 或 'triangle'
-    let isWaitingResponse = false;
+    let isWaitingResponse = false; // 是否在等待用户对当前闪烁做反应
+
+    // 闪烁持续时间 (毫秒)，图形出现多久后自动消失
+    const flashDuration = 200; 
 
     const circleEl = document.getElementById('circle');
     const triangleEl = document.getElementById('triangle');
@@ -163,111 +205,236 @@
         
         startTime = Date.now();
         
-        // 倒计时器
+        // 主倒计时器
         timerInterval = setInterval(() => {
             let elapsed = Math.floor((Date.now() - startTime) / 1000);
             let remaining = testDuration - elapsed;
+            if (remaining < 0) remaining = 0;
             timerEl.innerText = `剩余时间: ${remaining}s`;
             
-            if (remaining <= 0) endTest();
+            if (remaining <= 0) {
+                endTest();
+            }
         }, 1000);
 
-        nextTrial();
+        // 立即开始第一次尝试
+        nextTrial(1000); // 第一次等待1秒
     }
 
-    function nextTrial() {
+    // 准备下一次图形出现
+    function nextTrial(customDelay) {
+        // 确保清除所有定时器，防止叠加
+        clearTimeout(gameTimeout);
+        clearTimeout(hideTimeout);
+        
         isWaitingResponse = false;
+        
+        // 隐藏图形
         circleEl.style.display = 'none';
+        circleEl.style.opacity = '1';
         triangleEl.style.display = 'none';
+        triangleEl.style.opacity = '1';
 
-        // 随机延迟 1s - 3s
-        let delay = Math.random() * 2000 + 1000;
+        // 检查时间是否结束
+        if (Date.now() - startTime >= testDuration * 1000) return;
+
+        // 随机延迟 1s - 3s (ITI - Inter-Trial Interval)
+        let delay = customDelay || (Math.random() * 2000 + 1000);
         gameTimeout = setTimeout(showShape, delay);
     }
 
+    // 出现图形（闪烁开始）
     function showShape() {
         currentShape = Math.random() > 0.5 ? 'circle' : 'triangle';
         let targetEl = currentShape === 'circle' ? circleEl : triangleEl;
         
+        // 显示图形
         targetEl.style.display = 'block';
         shapeAppearTime = Date.now();
         isWaitingResponse = true;
+
+        // 【核心修改】：设定定时器，在 flashDuration 后自动隐藏图形
+        hideTimeout = setTimeout(() => {
+            // targetEl.style.opacity = '0'; // 触发淡出过渡
+            // 再过一小会儿彻底隐藏，并标记为漏击（如果用户还没点击）
+            setTimeout(() => {
+                if (isWaitingResponse) {
+                    // 如果图形消失时用户还没点击，视为漏击
+                    targetEl.style.display = 'none';
+                    stats.missed++;
+                    updateScoreboard();
+                    isWaitingResponse = false; // 不再接受对此次闪烁的反应
+                    // showFeedback("漏击", "#95a5a6"); // 可选：提示漏击
+                    nextTrial(); // 进入下一次循环
+                } else {
+                    // 用户已经点击过了，图形已经被处理隐藏了
+                    targetEl.style.display = 'none';
+                }
+            }, 50); // 给一点点缓冲时间让opacity过渡
+            
+        }, flashDuration);
     }
 
-    gameArea.addEventListener('mousedown', (e) => {
+    // 处理点击事件（鼠标或触摸）
+    function handleResponse(e) {
+        // 如果当前没有图形闪烁，或者图形已经消失，点击无效
         if (!isWaitingResponse) return;
 
-        const rect = gameArea.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const isLeftClick = clickX < rect.width / 2;
+        isWaitingResponse = false; // 成功捕获反应，停止等待
+        
+        // 立即隐藏图形
+        circleEl.style.display = 'none';
+        triangleEl.style.display = 'none';
+
         const rt = Date.now() - shapeAppearTime;
 
+        // 获取点击位置
+        const rect = gameArea.getBoundingClientRect();
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        
+        if (!clientX) return; // 防止意外错误
+
+        const clickX = clientX - rect.left;
+        const isLeftClick = clickX < rect.width / 2;
+
         let isCorrect = false;
+        // 逻辑：圆-左，三角-右
         if ((currentShape === 'circle' && isLeftClick) || (currentShape === 'triangle' && !isLeftClick)) {
             isCorrect = true;
             stats.correct++;
-            showFeedback("正确!", "#2ed573");
+            showFeedback("✓", "#2ed573");
         } else {
             isCorrect = false;
             stats.wrong++;
-            showFeedback("错误!", "#ff4757");
+            showFeedback("✕", "#ff4757");
         }
 
-        // 记录结果 (仅记录正确反应的时间点用于曲线分析)
+        // 记录正确反应的数据
         if (isCorrect) {
             results.push({
-                x: Math.floor((Date.now() - startTime) / 1000),
-                y: rt
+                x: Math.floor((Date.now() - startTime) / 1000), // 测试进行的时间点（秒）
+                y: rt // 反应时长（毫秒）
             });
         }
 
-        scoreEl.innerText = `正确: ${stats.correct} | 错误: ${stats.wrong}`;
+        updateScoreboard();
+        
+        // 清除那个原本准备自动隐藏图形的定时器，因为我们已经手动隐藏了
+        clearTimeout(hideTimeout);
+        
+        // 进入下一次循环
         nextTrial();
+    }
+
+    // 监听鼠标点击
+    gameArea.addEventListener('mousedown', handleResponse);
+    // 监听触摸事件（适配手机）
+    gameArea.addEventListener('touchstart', (e) => {
+        // e.preventDefault(); // 防止双击缩放
+        handleResponse(e);
     });
+
+    function updateScoreboard() {
+        scoreEl.innerText = `正确: ${stats.correct} | 错误: ${stats.wrong} | 漏击: ${stats.missed}`;
+    }
 
     function showFeedback(text, color) {
         feedbackEl.innerText = text;
         feedbackEl.style.color = color;
-        setTimeout(() => feedbackEl.innerText = "", 500);
+        // 反馈文本本身也闪烁一下消失
+        feedbackEl.style.opacity = '1';
+        setTimeout(() => {
+            feedbackEl.style.opacity = '0';
+        }, 400);
     }
 
     function endTest() {
+        // 停止所有后续动作
         clearInterval(timerInterval);
         clearTimeout(gameTimeout);
+        clearTimeout(hideTimeout);
         
+        isWaitingResponse = false;
+        circleEl.style.display = 'none';
+        triangleEl.style.display = 'none';
+
+        // 显示结算界面
         document.getElementById('overlay').style.display = 'flex';
+        document.getElementById('start-screen').style.display = 'none';
         document.getElementById('report-container').style.display = 'block';
         
-        const avgRT = results.length > 0 ? (results.reduce((a, b) => a + b.y, 0) / results.length).toFixed(2) : 0;
-        document.getElementById('summary-text').innerText = 
-            `测试完成！平均反应时间: ${avgRT}ms | 正确率: ${((stats.correct/(stats.correct+stats.wrong || 1))*100).toFixed(1)}%`;
+        // 计算统计数据
+        const totalTrials = stats.correct + stats.wrong + stats.missed;
+        const correctRTs = results.map(r => r.y);
+        const avgRT = correctRTs.length > 0 ? (correctRTs.reduce((a, b) => a + b, 0) / correctRTs.length).toFixed(0) : 0;
+        
+        const accuracy = totalTrials > 0 ? ((stats.correct / totalTrials) * 100).toFixed(1) : 0;
+
+        let summaryHtml = `
+            <strong>测试结果概要：</strong><br>
+            总出现次数: ${totalTrials} 次<br>
+            正确点击: <span style="color:#2ed573">${stats.correct}</span> | 
+            按错方向: <span style="color:#ff4757">${stats.wrong}</span> | 
+            未反应/漏击: <span style="color:#95a5a6">${stats.missed}</span><br>
+            基本正确率 (不含漏击): ${((stats.correct/(stats.correct+stats.wrong || 1))*100).toFixed(1)}%<br>
+            <strong>平均反应时间 (仅正确): <span style="font-size:1.3rem; color:#007bff">${avgRT} ms</span></strong>
+        `;
+        
+        document.getElementById('summary-text').innerHTML = summaryHtml;
 
         renderChart();
     }
 
+    // 绘制 Chart.js 曲线图
     function renderChart() {
         const ctx = document.getElementById('reactionChart').getContext('2d');
+        
+        // 如果数据太少，不画图
+        if (results.length < 2) {
+            ctx.font = "20px sans-serif";
+            ctx.fillText("有效数据不足，无法绘制曲线图。", 50, 50);
+            return;
+        }
+
         new Chart(ctx, {
             type: 'line',
             data: {
                 datasets: [{
-                    label: '反应时长 (毫秒)',
-                    data: results,
-                    borderColor: '#007bff',
-                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    label: '反应时长 (ms)',
+                    data: results, // X是时间点，Y是毫秒数
+                    borderColor: 'black', // 曲线颜色
+                    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: 'black',
                     fill: true,
-                    tension: 0.3
+                    tension: 0.1 // 稍微平滑一点
                 }]
             },
             options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }, // 隐藏顶部的图例
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => `测试第 ${items[0].parsed.x} 秒`
+                        }
+                    }
+                },
                 scales: {
                     x: {
                         type: 'linear',
-                        title: { display: true, text: '测试时间 (秒)' }
+                        title: { display: true, text: '测试进行时间 (秒)' },
+                        min: 0,
+                        max: testDuration,
+                        ticks: { stepSize: 30 }
                     },
                     y: {
-                        title: { display: true, text: '毫秒 (ms)' },
-                        beginAtZero: false
+                        title: { display: true, text: '反应耗时 (毫秒)' },
+                        beginAtZero: false,
+                        suggestedMin: 100, // 反应一般不会低于100ms
+                        suggestedMax: 600
                     }
                 }
             }
