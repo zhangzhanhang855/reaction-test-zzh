@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注意力测试 (圆形/三角形)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: sans-serif;
+            overflow: hidden;
+            background-color: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* 顶部状态栏 */
+        #info-bar {
+            height: 50px;
+            background: #333;
+            color: white;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            z-index: 10;
+        }
+
+        /* 游戏区域 */
+        #game-area {
+            flex-grow: 1;
+            position: relative;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 分割线辅助 */
+        #divider {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            border-left: 1px dashed #ccc;
+        }
+
+        /* 形状样式 */
+        .shape {
+            display: none;
+            position: absolute;
+        }
+
+        #circle {
+            width: 100px;
+            height: 100px;
+            background-color: #ff4757;
+            border-radius: 50%;
+        }
+
+        #triangle {
+            width: 0;
+            height: 0;
+            border-left: 50px solid transparent;
+            border-right: 50px solid transparent;
+            border-bottom: 86.6px solid #2ed573;
+        }
+
+        /* 初始界面和结束界面 */
+        #overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            padding: 20px;
+            text-align: center;
+        }
+
+        #report-container {
+            width: 80%;
+            max-width: 800px;
+            display: none;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .feedback {
+            position: absolute;
+            top: 20%;
+            font-size: 2rem;
+            font-weight: bold;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="info-bar">
+    <div id="timer">剩余时间: 180s</div>
+    <div id="score">正确: 0 | 错误: 0</div>
+</div>
+
+<div id="game-area">
+    <div id="divider"></div>
+    <div id="circle" class="shape"></div>
+    <div id="triangle" class="shape"></div>
+    <div id="feedback-text" class="feedback"></div>
+</div>
+
+<div id="overlay">
+    <div id="start-screen">
+        <h1>注意力与反应力测试</h1>
+        <p>🔴 看到<b>圆形</b>：点击屏幕<b>左侧</b></p>
+        <p>🔺 看到<b>三角形</b>：点击屏幕<b>右侧</b></p>
+        <p>测试时长：3 分钟</p>
+        <button onclick="startTest()">开始测试</button>
+    </div>
+    
+    <div id="report-container">
+        <h2>测试报告</h2>
+        <canvas id="reactionChart"></canvas>
+        <p id="summary-text"></p>
+        <button onclick="location.reload()">重新测试</button>
+    </div>
+</div>
+
+<script>
+    let startTime, shapeAppearTime;
+    let testDuration = 180; // 3分钟
+    let timerInterval, gameTimeout;
+    let results = []; // 存储每次反应时间 {time: 测试进行的时间秒数, rt: 反应耗时}
+    let stats = { correct: 0, wrong: 0 };
+    let currentShape = null; // 'circle' 或 'triangle'
+    let isWaitingResponse = false;
+
+    const circleEl = document.getElementById('circle');
+    const triangleEl = document.getElementById('triangle');
+    const gameArea = document.getElementById('game-area');
+    const timerEl = document.getElementById('timer');
+    const scoreEl = document.getElementById('score');
+    const feedbackEl = document.getElementById('feedback-text');
+
+    function startTest() {
+        document.getElementById('start-screen').style.display = 'none';
+        document.getElementById('overlay').style.display = 'none';
+        
+        startTime = Date.now();
+        
+        // 倒计时器
+        timerInterval = setInterval(() => {
+            let elapsed = Math.floor((Date.now() - startTime) / 1000);
+            let remaining = testDuration - elapsed;
+            timerEl.innerText = `剩余时间: ${remaining}s`;
+            
+            if (remaining <= 0) endTest();
+        }, 1000);
+
+        nextTrial();
+    }
+
+    function nextTrial() {
+        isWaitingResponse = false;
+        circleEl.style.display = 'none';
+        triangleEl.style.display = 'none';
+
+        // 随机延迟 1s - 3s
+        let delay = Math.random() * 2000 + 1000;
+        gameTimeout = setTimeout(showShape, delay);
+    }
+
+    function showShape() {
+        currentShape = Math.random() > 0.5 ? 'circle' : 'triangle';
+        let targetEl = currentShape === 'circle' ? circleEl : triangleEl;
+        
+        targetEl.style.display = 'block';
+        shapeAppearTime = Date.now();
+        isWaitingResponse = true;
+    }
+
+    gameArea.addEventListener('mousedown', (e) => {
+        if (!isWaitingResponse) return;
+
+        const rect = gameArea.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const isLeftClick = clickX < rect.width / 2;
+        const rt = Date.now() - shapeAppearTime;
+
+        let isCorrect = false;
+        if ((currentShape === 'circle' && isLeftClick) || (currentShape === 'triangle' && !isLeftClick)) {
+            isCorrect = true;
+            stats.correct++;
+            showFeedback("正确!", "#2ed573");
+        } else {
+            isCorrect = false;
+            stats.wrong++;
+            showFeedback("错误!", "#ff4757");
+        }
+
+        // 记录结果 (仅记录正确反应的时间点用于曲线分析)
+        if (isCorrect) {
+            results.push({
+                x: Math.floor((Date.now() - startTime) / 1000),
+                y: rt
+            });
+        }
+
+        scoreEl.innerText = `正确: ${stats.correct} | 错误: ${stats.wrong}`;
+        nextTrial();
+    });
+
+    function showFeedback(text, color) {
+        feedbackEl.innerText = text;
+        feedbackEl.style.color = color;
+        setTimeout(() => feedbackEl.innerText = "", 500);
+    }
+
+    function endTest() {
+        clearInterval(timerInterval);
+        clearTimeout(gameTimeout);
+        
+        document.getElementById('overlay').style.display = 'flex';
+        document.getElementById('report-container').style.display = 'block';
+        
+        const avgRT = results.length > 0 ? (results.reduce((a, b) => a + b.y, 0) / results.length).toFixed(2) : 0;
+        document.getElementById('summary-text').innerText = 
+            `测试完成！平均反应时间: ${avgRT}ms | 正确率: ${((stats.correct/(stats.correct+stats.wrong || 1))*100).toFixed(1)}%`;
+
+        renderChart();
+    }
+
+    function renderChart() {
+        const ctx = document.getElementById('reactionChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: '反应时长 (毫秒)',
+                    data: results,
+                    borderColor: '#007bff',
+                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        type: 'linear',
+                        title: { display: true, text: '测试时间 (秒)' }
+                    },
+                    y: {
+                        title: { display: true, text: '毫秒 (ms)' },
+                        beginAtZero: false
+                    }
+                }
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
